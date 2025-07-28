@@ -1,8 +1,8 @@
 # ☁️ Cloud Bootstrap
 
 [![Ansible](https://img.shields.io/badge/Ansible-ready-blue?logo=ansible)](https://www.ansible.com/)
-[![Docker](https://img.shields.io/badge/Docker-included-blue?logo=docker)]
-[![AlmaLinux](https://img.shields.io/badge/AlmaLinux-8%2F9-blueviolet?logo=redhat)]
+[![Docker](https://img.shields.io/badge/Docker-included-blue?logo=docker)]()
+[![AlmaLinux](https://img.shields.io/badge/AlmaLinux-8%2F9-blueviolet?logo=redhat)]()
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 A clean and repeatable bootstrap setup for AlmaLinux servers using Ansible.  
