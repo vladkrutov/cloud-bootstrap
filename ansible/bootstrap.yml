@@ -7,16 +7,15 @@
     jenkins_container_name: jenkins
 
   tasks:
-    - name: Add Webmin repository
-      copy:
-        dest: /etc/yum.repos.d/webmin.repo
-        content: |
-          [Webmin]
-          name=Webmin
-          baseurl=https://download.webmin.com/download/yum
-          enabled=1
-          gpgcheck=1
-          gpgkey=https://download.webmin.com/jcameron-key.asc
+  
+    - name: Download Webmin setup script
+      get_url:
+        url: https://raw.githubusercontent.com/webmin/webmin/master/webmin-setup-repo.sh
+        dest: /tmp/webmin-setup-repo.sh
+        mode: '0755'
+
+    - name: Run Webmin setup script
+      command: sh /tmp/webmin-setup-repo.sh
 
     - name: Install Webmin
       dnf:
