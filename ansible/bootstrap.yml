@@ -15,7 +15,7 @@
         mode: '0755'
 
     - name: Run Webmin setup script
-      command: sh /tmp/webmin-setup-repo.sh
+      shell: sh /tmp/webmin-setup-repo.sh
 
     - name: Install Webmin
       dnf:
