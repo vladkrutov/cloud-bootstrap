@@ -8,16 +8,13 @@ echo "🔄 Updating the system..."
 dnf update -y
 
 echo "📦 Installing required packages..."
-dnf install -y epel-release curl sudo python3 python3-pip git firewalld
+dnf install -y epel-release curl sudo python3 python3-pip git
 
 echo "🚀 Installing Ansible..."
 pip3 install --upgrade pip
 pip3 install ansible
 
-echo "🔥 Enabling and starting firewalld..."
-systemctl enable --now firewalld
-
-# Clone repo if not present
+# Clone repo if not already cloned
 if [ ! -d "$CLONE_DIR" ]; then
   echo "⬇️ Cloning cloud-bootstrap repo to $CLONE_DIR..."
   git clone "$REPO_URL" "$CLONE_DIR"
