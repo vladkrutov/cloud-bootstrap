@@ -36,16 +36,16 @@ read -p "Your choice [Y/D/N]: " choice
 case "${choice^^}" in
   Y)
     echo "🚀 Running Ansible playbook (apply mode)..."
-    ansible-playbook -i ansible/inventory.ini ansible/bootstrap.yml
+    ansible-playbook -C ansible/bootstrap.yml
     ;;
   D)
     echo "🔍 Running Ansible in check mode (dry run)..."
-    ansible-playbook -i ansible/inventory.ini ansible/bootstrap.yml --check
+    ansible-playbook --check ansible/bootstrap.yml
     echo
     read -p "Apply the changes now? [Y/N]: " confirm
     if [[ "${confirm^^}" == "Y" ]]; then
       echo "🚀 Running Ansible playbook (apply mode)..."
-      ansible-playbook -i ansible/inventory.ini ansible/bootstrap.yml
+      ansible-playbook ansible/bootstrap.yml
     else
       echo "❌ Skipped applying changes."
     fi

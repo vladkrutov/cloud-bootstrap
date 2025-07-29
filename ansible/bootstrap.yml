@@ -23,13 +23,6 @@
         name: webmin
         state: present
 
-    - name: Open Webmin port in firewalld
-      firewalld:
-        port: 10000/tcp
-        permanent: true
-        state: enabled
-        immediate: true
-
     - name: Enable and start Webmin
       systemd:
         name: webmin
@@ -56,17 +49,10 @@
 
     - name: Run Jenkins container
       shell: |
-        docker run -d \
-          --name {{ jenkins_container_name }} \
-          -p {{ jenkins_port }}:8080 \
-          -v jenkins_home:/var/jenkins_home \
+        docker run -d \\
+          --name {{ jenkins_container_name }} \\
+          -p {{ jenkins_port }}:8080 \\
+          -v jenkins_home:/var/jenkins_home \\
           jenkins/jenkins:lts
       args:
         creates: /var/lib/docker/volumes/jenkins_home
-
-    - name: Open Jenkins port in firewalld
-      firewalld:
-        port: "{{ jenkins_port }}/tcp"
-        permanent: true
-        state: enabled
-        immediate: true

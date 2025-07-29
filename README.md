@@ -14,7 +14,6 @@ Includes Webmin, Docker Engine, Docker Compose, and Jenkins in a container.
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/vladkrutov/cloud-bootstrap/main/bootstrap.sh | bash
-ansible-playbook -i ansible/inventory.ini ansible/bootstrap.yml
 ```
 
 ---
