@@ -6,7 +6,8 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 A clean and repeatable bootstrap setup for AlmaLinux servers using Ansible.  
-Includes Webmin, Docker Engine, Docker Compose, and Jenkins in a container.
+Includes Webmin, Docker Engine, Docker Compose, and Jenkins in a container.  
+The bootstrap now supports AlmaLinux 8/9, includes root privilege checks, safe bash execution mode, and verifies required files before running.
 
 ---
 
@@ -16,6 +17,8 @@ Includes Webmin, Docker Engine, Docker Compose, and Jenkins in a container.
 curl -sSL https://raw.githubusercontent.com/vladkrutov/cloud-bootstrap/main/bootstrap.sh | bash
 ```
 
+> **Note:** The script must be run as root (sudo). Ensure that `curl` and `git` are installed before running.
+
 ---
 
 ## 🔧 What’s Installed
@@ -23,8 +26,8 @@ curl -sSL https://raw.githubusercontent.com/vladkrutov/cloud-bootstrap/main/boot
 | Component | Description |
 |----------|-------------|
 | Webmin   | Admin panel on `https://<host>:10000` |
-| Docker + Compose | Container runtime and plugin |
-| Jenkins  | CI server on `http://<host>:8080` |
+| Docker + Compose | Docker Engine and Docker Compose plugin |
+| Jenkins  | CI/CD server running in Docker |
 
 ---
 
@@ -44,6 +47,7 @@ cloud-bootstrap/
 
 ## 🛡 Notes
 
-- firewalld is enabled and configured to allow required ports
+- firewalld is enabled and configured to allow required ports; script checks for root privileges and missing files before running
 - Webmin runs on the host; Jenkins runs in Docker
 - Nginx/SSL can be added later as a separate step
+- The script uses `set -euo pipefail` for safer execution and `git pull --ff-only` to avoid merge conflicts
