@@ -112,3 +112,226 @@
           - "127.0.0.1:8080:8080"
         volumes:
           - jenkins_home:/var/jenkins_home
+
+    - name: Install Apache (httpd) and required modules
+      dnf:
+        name:
+          - httpd
+          - mod_ssl
+          - policycoreutils-python-utils
+          - firewalld
+        state: present
+
+    - name: Enable and start Apache and firewalld
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop: [ httpd, firewalld ]
+
+    - name: Ensure vhosts dir and include are present
+      block:
+        - name: Create /etc/httpd/vhosts directory
+          file:
+            path: /etc/httpd/vhosts
+            state: directory
+            mode: '0755'
+        - name: Install include file for our vhosts
+          copy:
+            dest: /etc/httpd/conf.d/00-vhosts-include.conf
+            content: |
+              IncludeOptional /etc/httpd/vhosts/*.conf
+          notify: reload apache
+
+    - name: Ensure SELinux booleans for httpd proxy/mail
+      seboolean:
+        name: "{{ item }}"
+        state: true
+        persistent: true
+      loop:
+        - httpd_can_network_connect
+        - httpd_can_sendmail
+
+    - name: Ensure TLS directory exists
+      file:
+        path: "/etc/ssl/{{ domain_base }}"
+        state: directory
+        mode: '0755'
+
+    - name: Issue wildcard certificate via acme.sh and Cloudflare (dns-01)
+      shell: |
+        curl -fsSL https://get.acme.sh | sh -s email={{ letsencrypt_email }}
+        export CF_Token='{{ cf_api_token | default("") }}'
+        ~/.acme.sh/acme.sh --issue --dns dns_cf -d {{ domain_base }} -d "*.{{ domain_base }}"
+        ~/.acme.sh/acme.sh --install-cert -d {{ domain_base }} \
+          --fullchain-file /etc/ssl/{{ domain_base }}/fullchain.pem \
+          --key-file /etc/ssl/{{ domain_base }}/privkey.pem \
+          --reloadcmd "systemctl reload httpd"
+      args:
+        creates: "/etc/ssl/{{ domain_base }}/fullchain.pem"
+      when: wildcard_issue | default(true)
+
+    - name: Install default catch-all vhost (443 → k3d ingress)
+      copy:
+        dest: /etc/httpd/vhosts/000-default-ssl.conf
+        content: |
+          <VirtualHost *:80>
+            ServerName _
+            Redirect permanent / https://%{HTTP_HOST}%{REQUEST_URI}
+          </VirtualHost>
+          <VirtualHost *:443>
+            ServerName _
+            SSLEngine on
+            SSLCertificateFile    /etc/ssl/{{ domain_base }}/fullchain.pem
+            SSLCertificateKeyFile /etc/ssl/{{ domain_base }}/privkey.pem
+            ProxyPreserveHost On
+            RequestHeader set X-Forwarded-Proto "https"
+            ProxyPass        / http://127.0.0.1:{{ k3d_http_port | default('8080') }}/
+            ProxyPassReverse / http://127.0.0.1:{{ k3d_http_port | default('8080') }}/
+            Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+            ErrorLog  logs/catchall-error.log
+            CustomLog logs/catchall-access.log combined
+          </VirtualHost>
+      notify: reload apache
+
+    - name: Install manager.hapy.dev vhost (proxy → Webmin 10000)
+      copy:
+        dest: /etc/httpd/vhosts/100-manager.conf
+        content: |
+          <VirtualHost *:80>
+            ServerName {{ manager_host }}
+            Redirect permanent / https://{{ manager_host }}/
+          </VirtualHost>
+          <VirtualHost *:443>
+            ServerName {{ manager_host }}
+            SSLEngine on
+            SSLCertificateFile    /etc/ssl/{{ domain_base }}/fullchain.pem
+            SSLCertificateKeyFile /etc/ssl/{{ domain_base }}/privkey.pem
+            ProxyPreserveHost On
+            RequestHeader set X-Forwarded-Proto "https"
+            ProxyPass        / http://127.0.0.1:10000/
+            ProxyPassReverse / http://127.0.0.1:10000/
+            Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+            ErrorLog  logs/manager-error.log
+            CustomLog logs/manager-access.log combined
+          </VirtualHost>
+      notify: reload apache
+
+    - name: Install jenkins.hapy.dev vhost (proxy → Jenkins 8080)
+      copy:
+        dest: /etc/httpd/vhosts/110-jenkins.conf
+        content: |
+          <VirtualHost *:80>
+            ServerName {{ jenkins_host }}
+            Redirect permanent / https://{{ jenkins_host }}/
+          </VirtualHost>
+          <VirtualHost *:443>
+            ServerName {{ jenkins_host }}
+            SSLEngine on
+            SSLCertificateFile    /etc/ssl/{{ domain_base }}/fullchain.pem
+            SSLCertificateKeyFile /etc/ssl/{{ domain_base }}/privkey.pem
+            ProxyPreserveHost On
+            RequestHeader set X-Forwarded-Proto "https"
+            ProxyPass        / http://127.0.0.1:8080/
+            ProxyPassReverse / http://127.0.0.1:8080/
+            Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+            ErrorLog  logs/jenkins-error.log
+            CustomLog logs/jenkins-access.log combined
+          </VirtualHost>
+      notify: reload apache
+
+    - name: Install grafana.hapy.dev vhost (front → k3d Ingress)
+      copy:
+        dest: /etc/httpd/vhosts/120-grafana.conf
+        content: |
+          <VirtualHost *:80>
+            ServerName {{ grafana_host }}
+            Redirect permanent / https://{{ grafana_host }}/
+          </VirtualHost>
+          <VirtualHost *:443>
+            ServerName {{ grafana_host }}
+            SSLEngine on
+            SSLCertificateFile    /etc/ssl/{{ domain_base }}/fullchain.pem
+            SSLCertificateKeyFile /etc/ssl/{{ domain_base }}/privkey.pem
+            ProxyPreserveHost On
+            RequestHeader set X-Forwarded-Proto "https"
+            ProxyPass        / http://127.0.0.1:{{ k3d_http_port | default('8080') }}/
+            ProxyPassReverse / http://127.0.0.1:{{ k3d_http_port | default('8080') }}/
+            Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+          </VirtualHost>
+      notify: reload apache
+
+    - name: Install vpn.hapy.dev vhost (path /ws → Amnezia 8443 local)
+      copy:
+        dest: /etc/httpd/vhosts/130-vpn.conf
+        content: |
+          <VirtualHost *:80>
+            ServerName {{ vpn_host }}
+            Redirect permanent / https://{{ vpn_host }}/
+          </VirtualHost>
+          <VirtualHost *:443>
+            ServerName {{ vpn_host }}
+            SSLEngine on
+            SSLCertificateFile    /etc/ssl/{{ domain_base }}/fullchain.pem
+            SSLCertificateKeyFile /etc/ssl/{{ domain_base }}/privkey.pem
+            ProxyPreserveHost On
+            RequestHeader set X-Forwarded-Proto "https"
+            ProxyPass        /ws https://127.0.0.1:8443/
+            ProxyPassReverse /ws https://127.0.0.1:8443/
+          </VirtualHost>
+      notify: reload apache
+
+    - name: Open firewall ports (http/https/webmin)
+      firewalld:
+        port: "{{ item }}"
+        permanent: true
+        state: enabled
+      loop:
+        - 80/tcp
+        - 443/tcp
+        - 10000/tcp
+      notify: reload firewalld
+
+    - name: Open mail and rustdesk ports (if needed)
+      firewalld:
+        port: "{{ item }}"
+        permanent: true
+        state: enabled
+      loop:
+        - 25/tcp
+        - 465/tcp
+        - 587/tcp
+        - 143/tcp
+        - 993/tcp
+        - 21115/tcp
+        - 21116/tcp
+        - 21116/udp
+      notify: reload firewalld
+
+    - name: Create k3d storage dir and set SELinux context
+      block:
+        - file:
+            path: "/srv/k3d-storage"
+            state: directory
+            mode: '0755'
+        - sefcontext:
+            target: '/srv/k3d-storage(/.*)?'
+            setype: container_file_t
+            state: present
+        - command: restorecon -Rv /srv/k3d-storage
+
+    - name: Create k3d cluster (idempotent)
+      shell: |
+        k3d cluster list | grep -q '^prod\b' && exit 0
+        k3d cluster create prod \
+          --servers 1 \
+          --api-port {{ k3d_api_port | default('127.0.0.1:6550') }} \
+          -p "{{ k3d_http_port | default('127.0.0.1:8080') }}:80@loadbalancer" \
+          --k3s-arg "--disable=servicelb@server:*" \
+          --volume /srv/k3d-storage:/var/lib/rancher/k3s/storage@server:*
+
+  handlers:
+    - name: reload apache
+      service: { name: httpd, state: reloaded }
+    - name: reload firewalld
+      service: { name: firewalld, state: reloaded }

@@ -1,49 +1,42 @@
-# ☁️ Cloud Bootstrap
+# Sample Ansible group variables configuration file
+# Copy this file to 'all.yml' and update the values before running the playbook.
 
-[![Ansible](https://img.shields.io/badge/Ansible-ready-blue?logo=ansible)](https://www.ansible.com/)
-[![Docker](https://img.shields.io/badge/Docker-included-blue?logo=docker)]()
-[![AlmaLinux](https://img.shields.io/badge/AlmaLinux-8%2F9-blueviolet?logo=redhat)]()
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+# Domain name for your server (e.g., example.com)
+domain_name: "your.domain.com"
 
-A clean and repeatable bootstrap setup for AlmaLinux servers using Ansible.  
-Includes Webmin, Docker Engine, Docker Compose, and Jenkins in a container.
+# Cloudflare API token for DNS management (replace with your token)
+cloudflare_api_token: "your_cloudflare_api_token_here"
 
----
+# Email address used for certificates and notifications
+admin_email: "admin@your.domain.com"
 
-## 🚀 Quick Start
+# Components to install (set to true to enable, false to disable)
+install_webmin: true       # Install Webmin / Virtualmin admin panel
+install_apache: false      # Install Apache web server (set false if using Nginx)
+install_nginx: true        # Install Nginx web server (set false if using Apache)
+install_docker: true       # Install Docker and Docker Compose
+install_jenkins: true      # Install Jenkins CI server in Docker container
+install_k3d: false         # Install k3d Kubernetes cluster
+install_monitoring: true   # Install monitoring stack (VictoriaMetrics + Grafana)
+install_vpn: false         # Install optional VPN server
 
-```bash
-curl -sSL https://raw.githubusercontent.com/vladkrutov/cloud-bootstrap/main/bootstrap.sh | bash
-```
+# Additional configuration options can be added below as needed
 
----
 
-## 🔧 What’s Installed
+# Sample Ansible vault variables file
+# This file should contain sensitive data encrypted with ansible-vault.
+# Copy this file to 'vault.yml' and replace dummy values with your secrets.
 
-| Component | Description |
-|----------|-------------|
-| Webmin   | Admin panel on `https://<host>:10000` |
-| Docker + Compose | Container runtime and plugin |
-| Jenkins  | CI server on `http://<host>:8080` |
+# Encrypted Cloudflare API token (example placeholder)
+cloudflare_api_token_encrypted: "vault-encrypted-string-placeholder"
 
----
+# Encrypted password for Webmin admin user
+webmin_admin_password_encrypted: "vault-encrypted-string-placeholder"
 
-## 📦 Project Structure
+# Encrypted Jenkins admin password
+jenkins_admin_password_encrypted: "vault-encrypted-string-placeholder"
 
-```
-cloud-bootstrap/
-├── bootstrap.sh
-├── LICENSE
-├── README.md
-└── ansible/
-    ├── bootstrap.yml
-    └── inventory.ini
-```
+# Encrypted VPN server credentials (if VPN is enabled)
+vpn_server_password_encrypted: "vault-encrypted-string-placeholder"
 
----
-
-## 🛡 Notes
-
-- firewalld is enabled and configured to allow required ports
-- Webmin runs on the host; Jenkins runs in Docker
-- Nginx/SSL can be added later as a separate step
+# Add other sensitive variables here as needed, encrypted with ansible-vault
