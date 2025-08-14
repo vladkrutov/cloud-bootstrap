@@ -1,3 +1,4 @@
 # Local Ansible config and secrets
 ansible/group_vars/all.yml
 ansible/vault.yml
+scripts/
