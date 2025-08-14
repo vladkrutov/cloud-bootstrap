@@ -1,6 +1,32 @@
-- name: Install Webmin, Docker Compose, and Jenkins
+- name: Install Webmin, Docker, Jenkins, and K3d
   hosts: localhost
   become: true
+  gather_facts: true
+
+  vars_files:
+    - group_vars/all.yml
+    - vault.yml
+
+  pre_tasks:
+    - name: Check local vars file exists (group_vars/all.yml)
+      stat:
+        path: "{{ playbook_dir }}/group_vars/all.yml"
+      register: allvars
+
+    - name: Fail with instruction if group_vars/all.yml is missing
+      fail:
+        msg: "Missing group_vars/all.yml. Copy ansible/group_vars/all.yml.sample to ansible/group_vars/all.yml and fill your values."
+      when: not allvars.stat.exists
+
+    - name: Check vault.yml exists
+      stat:
+        path: "{{ playbook_dir }}/vault.yml"
+      register: vaultvars
+
+    - name: Warn if vault.yml missing (you can create and encrypt later)
+      debug:
+        msg: "vault.yml not found — proceeding without secrets. Create from ansible/vault.yml.sample and encrypt via ansible-vault when ready."
+      when: not vaultvars.stat.exists
 
   vars:
     jenkins_port: 8080
@@ -28,11 +54,30 @@
         state: started
         enabled: true
 
-    - name: Install Docker
-      shell: |
-        curl -fsSL https://get.docker.com | sh
-      args:
-        creates: /usr/bin/docker
+    - name: Install EPEL release and common tools
+      dnf:
+        name:
+          - epel-release
+          - git
+          - curl
+          - vim
+          - htop
+          - python3-pip
+        state: present
+
+    - name: Install Docker using community.docker.docker_installation if available
+      block:
+        - name: Install Docker using community.docker.docker_installation
+          community.docker.docker_installation:
+            state: present
+      rescue:
+        - name: Install Docker packages via dnf
+          dnf:
+            name:
+              - docker-ce
+              - docker-ce-cli
+              - containerd.io
+            state: present
 
     - name: Enable and start Docker
       systemd:
@@ -40,18 +85,30 @@
         state: started
         enabled: true
 
-    - name: Install Docker Compose plugin
+    - name: Install docker-compose-plugin if available
+      dnf:
+        name: docker-compose-plugin
+        state: present
+      ignore_errors: yes
+
+    - name: Install k3d from GitHub releases
       get_url:
-        url: https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64
-        dest: /usr/local/bin/docker-compose
+        url: https://github.com/k3d-io/k3d/releases/latest/download/k3d-linux-amd64
+        dest: /usr/local/bin/k3d
         mode: '0755'
 
+    - name: Create Jenkins Docker volume
+      docker_volume:
+        name: jenkins_home
+        state: present
+
     - name: Run Jenkins container
-      shell: |
-        docker run -d \\
-          --name {{ jenkins_container_name }} \\
-          -p {{ jenkins_port }}:8080 \\
-          -v jenkins_home:/var/jenkins_home \\
-          jenkins/jenkins:lts
-      args:
-        creates: /var/lib/docker/volumes/jenkins_home
+      docker_container:
+        name: "{{ jenkins_container_name }}"
+        image: jenkins/jenkins:lts
+        state: started
+        restart_policy: always
+        published_ports:
+          - "127.0.0.1:8080:8080"
+        volumes:
+          - jenkins_home:/var/jenkins_home
