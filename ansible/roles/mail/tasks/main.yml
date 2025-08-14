@@ -1,2 +1,23 @@
-# tasks for role: mail
-# TODO: implement
+---
+- name: Install mail stack
+  package:
+    name:
+      - postfix
+      - dovecot
+      - dovecot-pigeonhole
+      - spamassassin
+      - clamav
+      - clamav-update
+    state: present
+  when: mail_enabled | default(true)
+
+- name: Enable mail services
+  systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - postfix
+    - dovecot
+    - spamassassin
+  when: mail_enabled | default(true)

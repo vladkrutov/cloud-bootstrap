@@ -1,2 +1,72 @@
-# tasks for role: common
-# TODO: implement
+---
+- name: Install base utilities
+  package:
+    name:
+      - epel-release
+      - vim
+      - htop
+      - jq
+      - git
+      - curl
+      - wget
+      - unzip
+      - chrony
+      - fail2ban
+      - policycoreutils-python-utils
+    state: present
+
+- name: Enable chronyd & fail2ban
+  systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop: [ chronyd, fail2ban ]
+
+- name: SSH hardening
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?\s*{{ item.key }}'
+    line: "{{ item.key }} {{ item.val }}"
+    backrefs: yes
+  loop:
+    - { key: 'PasswordAuthentication', val: 'no' }
+    - { key: 'PermitRootLogin',       val: 'prohibit-password' }
+  notify: restart ssh
+
+- name: SELinux booleans for Apache networking
+  seboolean:
+    name: "{{ item }}"
+    state: true
+    persistent: true
+  loop:
+    - httpd_can_network_connect
+    - httpd_can_sendmail
+
+- name: Configure Docker logging caps
+  copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {"log-driver":"json-file","log-opts":{"max-size":"50m","max-file":"5"}}
+  notify: restart docker
+
+- name: Install kubectl
+  shell: |
+    set -e
+    KVER=$(curl -fsSL https://storage.googleapis.com/kubernetes-release/release/stable.txt)
+    curl -fsSL -o /usr/local/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/${KVER}/bin/linux/amd64/kubectl
+    chmod 0755 /usr/local/bin/kubectl
+  args:
+    creates: /usr/local/bin/kubectl
+
+- name: Install helm
+  shell: |
+    set -e
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
+
+handlers:
+  - name: restart ssh
+    service: { name: sshd, state: restarted }
+  - name: restart docker
+    service: { name: docker, state: restarted }

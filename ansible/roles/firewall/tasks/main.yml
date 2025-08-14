@@ -1,2 +1,85 @@
-# tasks for role: firewall
-# TODO: implement
+---
+- name: Ensure firewalld is running
+  systemd: { name: firewalld, state: started, enabled: true }
+
+- name: Open TCP ports
+  firewalld:
+    port: "{{ item }}/tcp"
+    permanent: true
+    state: enabled
+  loop: "{ open_ports | default([22}"
+  notify: reload firewalld
+
+- name: Open UDP ports for RustDesk relay
+  firewalld:
+    port: 21116/udp
+    permanent: true
+    state: enabled
+  notify: reload firewalld
+
+handlers:
+  - name: reload firewalld
+    service: { name: firewalld, state: reloaded } ---
+- name: Ensure firewalld is running
+  systemd: { name: firewalld, state: started, enabled: true }
+
+- name: Open TCP ports
+  firewalld:
+    port: "{{ item }}/tcp"
+    permanent: true
+    state: enabled
+  loop: "{80}"
+  notify: reload firewalld
+
+- name: Open UDP ports for RustDesk relay
+  firewalld:
+    port: 21116/udp
+    permanent: true
+    state: enabled
+  notify: reload firewalld
+
+handlers:
+  - name: reload firewalld
+    service: { name: firewalld, state: reloaded } ---
+- name: Ensure firewalld is running
+  systemd: { name: firewalld, state: started, enabled: true }
+
+- name: Open TCP ports
+  firewalld:
+    port: "{{ item }}/tcp"
+    permanent: true
+    state: enabled
+  loop: "{443}"
+  notify: reload firewalld
+
+- name: Open UDP ports for RustDesk relay
+  firewalld:
+    port: 21116/udp
+    permanent: true
+    state: enabled
+  notify: reload firewalld
+
+handlers:
+  - name: reload firewalld
+    service: { name: firewalld, state: reloaded } ---
+- name: Ensure firewalld is running
+  systemd: { name: firewalld, state: started, enabled: true }
+
+- name: Open TCP ports
+  firewalld:
+    port: "{{ item }}/tcp"
+    permanent: true
+    state: enabled
+  loop: "{10000]) }"
+  notify: reload firewalld
+
+- name: Open UDP ports for RustDesk relay
+  firewalld:
+    port: 21116/udp
+    permanent: true
+    state: enabled
+  notify: reload firewalld
+
+handlers:
+  - name: reload firewalld
+    service: { name: firewalld, state: reloaded }

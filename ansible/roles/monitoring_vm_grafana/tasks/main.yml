@@ -1,2 +1,24 @@
-# tasks for role: monitoring_vm_grafana
-# TODO: implement
+---
+- name: Deploy VictoriaMetrics + vmagent + vmalert + Grafana (in k3d)
+  shell: |
+    kubectl create ns observability || true
+    helm repo add vm https://victoriametrics.github.io/helm-charts
+    helm repo add grafana https://grafana.github.io/helm-charts
+    helm repo update
+    helm upgrade --install vm vm/victoria-metrics-single -n observability --set server.retentionPeriod=12
+    helm upgrade --install vmagent vm/victoria-metrics-agent -n observability
+    helm upgrade --install vmalert vm/victoria-metrics-alert -n observability
+    helm upgrade --install grafana grafana/grafana -n observability --set adminPassword='{{ grafana_admin_password | default("CHANGE_ME_ADMIN") }}' --set service.type=ClusterIP
+  args:
+    executable: /bin/bash
+  when: monitoring_stack | default('vm_grafana') == 'vm_grafana'
+
+- name: Register Grafana vhost spec
+  set_fact:
+    web_vhosts: >-
+      {{ (web_vhosts | default([])) + [{
+        "name": "120-grafana.conf",
+        "server_name": grafana_host,
+        "backend": "http://{{ k3d_http_port }}/"
+      }] }}
+  when: monitoring_stack | default('vm_grafana') == 'vm_grafana'

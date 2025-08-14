@@ -1,2 +1,22 @@
-# tasks for role: vpn_amnezia
-# TODO: implement
+---
+- name: Ensure Amnezia dir
+  file: { path: /srv/amnezia, state: directory, mode: '0755' }
+
+- name: Deploy Amnezia container (compose-less)
+  community.docker.docker_container:
+    name: amnezia
+    image: ghcr.io/amnezia-vpn/amnezia-server:latest
+    restart_policy: unless-stopped
+    published_ports:
+      - "127.0.0.1:8443:8443"
+  when: vpn_provider | default('amnezia') == 'amnezia'
+
+- name: Register VPN vhost spec (path /ws)
+  set_fact:
+    web_vhosts: >-
+      {{ (web_vhosts | default([])) + [{
+        "name": "130-vpn.conf",
+        "server_name": vpn_host,
+        "path_map": { "/ws": "https://127.0.0.1:8443/" }
+      }] }}
+  when: vpn_provider | default('amnezia') == 'amnezia'

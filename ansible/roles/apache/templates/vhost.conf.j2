@@ -23,4 +23,7 @@
 {% endif %}
 
   Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  ErrorLog  logs/{{ item.server_name | regex_replace('[^a-zA-Z0-9_-]','_') }}-error.log
+  CustomLog logs/{{ item.server_name | regex_replace('[^a-zA-Z0-9_-]','_') }}-access.log combined
+  {{ item.extra | default('') }}
 </VirtualHost>

@@ -1,2 +1,23 @@
-# tasks for role: virtualmin
-# TODO: implement
+---
+- name: Install Virtualmin installer
+  get_url:
+    url: https://software.virtualmin.com/gpl/scripts/install.sh
+    dest: /root/virtualmin-install.sh
+    mode: '0755'
+
+- name: Run Virtualmin installer (idempotent-ish)
+  command: /root/virtualmin-install.sh -y --minimal
+  args:
+    creates: /etc/webmin/webmin.acl
+
+- name: Ensure Apache is running
+  systemd: { name: httpd, state: started, enabled: true }
+
+- name: Register Manager vhost spec
+  set_fact:
+    web_vhosts: >-
+      {{ (web_vhosts | default([])) + [{
+        "name": "100-manager.conf",
+        "server_name": manager_host,
+        "backend": "http://127.0.0.1:10000/"
+      }] }}

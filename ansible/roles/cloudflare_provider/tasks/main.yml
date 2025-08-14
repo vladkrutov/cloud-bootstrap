@@ -1,2 +1,13 @@
-# tasks for role: cloudflare_provider
-# TODO: implement
+---
+- name: Ensure TLS dir exists
+  file: { path: "/etc/ssl/{{ domain_base }}", state: directory, mode: '0755' }
+
+- name: Issue wildcard cert via acme.sh (Cloudflare dns-01)
+  shell: |
+    curl -fsSL https://get.acme.sh | sh -s email={{ letsencrypt_email }}
+    export CF_Token='{{ cf_api_token | default("") }}'
+    ~/.acme.sh/acme.sh --issue --dns dns_cf -d {{ domain_base }} -d "*.{{ domain_base }}"
+    ~/.acme.sh/acme.sh --install-cert -d {{ domain_base }}       --fullchain-file /etc/ssl/{{ domain_base }}/fullchain.pem       --key-file /etc/ssl/{{ domain_base }}/privkey.pem       --reloadcmd "systemctl reload httpd"
+  args:
+    creates: "/etc/ssl/{{ domain_base }}/fullchain.pem"
+  when: dns_provider | default('cloudflare') == 'cloudflare' and (wildcard_issue | default(true))

@@ -1,2 +1,37 @@
-# tasks for role: apache
-# TODO: implement
+---
+- name: Install Apache and modules
+  package:
+    name:
+      - httpd
+      - mod_ssl
+    state: present
+
+- name: Ensure vhosts dir and include
+  file: { path: /etc/httpd/vhosts, state: directory, mode: '0755' }
+- copy:
+    dest: /etc/httpd/conf.d/00-vhosts-include.conf
+    content: "IncludeOptional /etc/httpd/vhosts/*.conf\n"
+  notify: reload apache
+
+- name: Set base TLS facts
+  set_fact:
+    tls:
+      cert: "/etc/ssl/{{ domain_base }}/fullchain.pem"
+      key:  "/etc/ssl/{{ domain_base }}/privkey.pem"
+
+- name: Prepend catch-all vhost spec (first)
+  set_fact:
+    web_vhosts: >-
+      {{ [{"name":"000-default-ssl.conf","server_name":"_","backend":"http://127.0.0.1:{{ k3d_http_port }}/"}] + (web_vhosts | default([])) }}
+
+- name: Render vhosts from specs
+  template:
+    src: vhost.conf.j2
+    dest: "/etc/httpd/vhosts/{{ item.name }}"
+    mode: '0644'
+  loop: "{{ web_vhosts | default([]) }}"
+  notify: reload apache
+
+handlers:
+  - name: reload apache
+    service: { name: httpd, state: reloaded }

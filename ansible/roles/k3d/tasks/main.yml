@@ -1,2 +1,19 @@
-# tasks for role: k3d
-# TODO: implement
+---
+- name: Install k3d binary
+  get_url:
+    url: https://github.com/k3d-io/k3d/releases/download/v5.7.4/k3d-linux-amd64
+    dest: /usr/local/bin/k3d
+    mode: '0755'
+
+- name: Ensure storage dir and SELinux label
+  file: { path: "{{ k3d_storage_host_dir }}", state: directory, mode: '0755' }
+- sefcontext:
+    target: '{{ k3d_storage_host_dir }}(/.*)?'
+    setype: container_file_t
+    state: present
+- command: restorecon -Rv {{ k3d_storage_host_dir }}
+
+- name: Create k3d cluster (idempotent)
+  shell: |
+    k3d cluster list | grep -q '^{{ k3d_name }}\b' && exit 0
+    k3d cluster create {{ k3d_name }}       --servers 1       --api-port {{ k3d_api_port }}       -p "{{ k3d_http_port }}:80@loadbalancer"       --k3s-arg "--disable=servicelb@server:*"       --volume {{ k3d_storage_host_dir }}:/var/lib/rancher/k3s/storage@server:*

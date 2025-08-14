@@ -45,5 +45,5 @@ open_ports:
   - 587
   - 143
   - 993
-  - 21115
-  - 21116
+  - 21115      # rustdesk hbbs
+  - 21116      # rustdesk hbbr (tcp)

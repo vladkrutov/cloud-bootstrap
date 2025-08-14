@@ -1,2 +1,29 @@
-# tasks for role: jenkins_docker
-# TODO: implement
+---
+- name: Ensure Jenkins data dir
+  file: { path: "{{ jenkins_data_dir }}", state: directory, mode: '0755' }
+- name: SELinux context for Jenkins data
+  sefcontext:
+    target: '{{ jenkins_data_dir }}(/.*)?'
+    setype: container_file_t
+    state: present
+- command: restorecon -Rv {{ jenkins_data_dir }}
+
+- name: Run Jenkins container
+  community.docker.docker_container:
+    name: jenkins
+    image: jenkins/jenkins:lts
+    user: "0:0"
+    restart_policy: always
+    published_ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - "{{ jenkins_data_dir }}:/var/jenkins_home"
+
+- name: Register Jenkins vhost spec
+  set_fact:
+    web_vhosts: >-
+      {{ (web_vhosts | default([])) + [{
+        "name": "110-jenkins.conf",
+        "server_name": jenkins_host,
+        "backend": "http://127.0.0.1:8080/"
+      }] }}

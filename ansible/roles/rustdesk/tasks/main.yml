@@ -1,2 +1,16 @@
-# tasks for role: rustdesk
-# TODO: implement
+---
+- name: Run RustDesk hbbs (ID server)
+  community.docker.docker_container:
+    name: hbbs
+    image: rustdesk/rustdesk-server:latest
+    command: hbbs -r rustdesk.{{ domain_base }}:21116
+    network_mode: host
+    restart_policy: unless-stopped
+
+- name: Run RustDesk hbbr (relay)
+  community.docker.docker_container:
+    name: hbbr
+    image: rustdesk/rustdesk-server:latest
+    command: hbbr
+    network_mode: host
+    restart_policy: unless-stopped
