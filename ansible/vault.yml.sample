@@ -1,0 +1,6 @@
+---
+# Copy to ansible/vault.yml and encrypt:
+#   ansible-vault encrypt ansible/vault.yml
+cf_api_token: "REPLACE_WITH_CLOUDFLARE_API_TOKEN"
+grafana_admin_password: "CHANGE_ME_STRONG_PASSWORD"
+jenkins_admin_password: "OPTIONAL"

@@ -1,0 +1,26 @@
+<VirtualHost *:80>
+  ServerName {{ item.server_name }}
+  Redirect permanent / https://{{ item.server_name }}/
+</VirtualHost>
+
+<VirtualHost *:443>
+  ServerName {{ item.server_name }}
+  SSLEngine on
+  SSLCertificateFile    {{ tls.cert }}
+  SSLCertificateKeyFile {{ tls.key }}
+
+  ProxyPreserveHost On
+  RequestHeader set X-Forwarded-Proto "https"
+
+{% if item.path_map is defined %}
+{% for p,b in item.path_map.items() %}
+  ProxyPass        {{ p }} {{ b }}
+  ProxyPassReverse {{ p }} {{ b }}
+{% endfor %}
+{% else %}
+  ProxyPass        / {{ item.backend }}
+  ProxyPassReverse / {{ item.backend }}
+{% endif %}
+
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+</VirtualHost>

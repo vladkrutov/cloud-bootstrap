@@ -1,5 +1,6 @@
-- name: Install Webmin, Docker, Jenkins, and K3d
-  hosts: localhost
+---
+- hosts: localhost
+  connection: local
   become: true
   gather_facts: true
 
@@ -8,330 +9,393 @@
     - vault.yml
 
   pre_tasks:
-    - name: Check local vars file exists (group_vars/all.yml)
-      stat:
-        path: "{{ playbook_dir }}/group_vars/all.yml"
+    - name: Check local vars exist
+      stat: { path: "{{ playbook_dir }}/group_vars/all.yml" }
       register: allvars
-
-    - name: Fail with instruction if group_vars/all.yml is missing
+    - name: Fail if group_vars/all.yml missing
       fail:
         msg: "Missing group_vars/all.yml. Copy ansible/group_vars/all.yml.sample to ansible/group_vars/all.yml and fill your values."
       when: not allvars.stat.exists
-
     - name: Check vault.yml exists
-      stat:
-        path: "{{ playbook_dir }}/vault.yml"
+      stat: { path: "{{ playbook_dir }}/vault.yml" }
       register: vaultvars
-
-    - name: Warn if vault.yml missing (you can create and encrypt later)
+    - name: Warn if vault.yml missing
       debug:
         msg: "vault.yml not found — proceeding without secrets. Create from ansible/vault.yml.sample and encrypt via ansible-vault when ready."
       when: not vaultvars.stat.exists
 
-  vars:
-    jenkins_port: 8080
-    jenkins_container_name: jenkins
+  roles:
+    - common
+    - firewall
+    - docker
+    - virtualmin
+    - cloudflare_provider
+    - apache
+    - mail
+    - jenkins_docker
+    - k3d
+    - monitoring_vm_grafana
+    - vpn_amnezia
+    - rustdesk
+---
+collections:
+  - name: community.docker
+  - name: ansible.posix
+  - name: community.general
+---
+- name: Install base utilities
+  package:
+    name:
+      - epel-release
+      - vim
+      - htop
+      - jq
+      - git
+      - curl
+      - wget
+      - unzip
+      - chrony
+      - fail2ban
+      - policycoreutils-python-utils
+    state: present
 
-  tasks:
-  
-    - name: Download Webmin setup script
-      get_url:
-        url: https://raw.githubusercontent.com/webmin/webmin/master/webmin-setup-repo.sh
-        dest: /tmp/webmin-setup-repo.sh
-        mode: '0755'
+- name: Enable chronyd & fail2ban
+  systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop: [ chronyd, fail2ban ]
 
-    - name: Run Webmin setup script
-      shell: sh /tmp/webmin-setup-repo.sh
+- name: SSH hardening
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?\s*{{ item.key }}'
+    line: "{{ item.key }} {{ item.val }}"
+    backrefs: yes
+  loop:
+    - { key: 'PasswordAuthentication', val: 'no' }
+    - { key: 'PermitRootLogin',       val: 'prohibit-password' }
+  notify: restart ssh
 
-    - name: Install Webmin
-      dnf:
-        name: webmin
-        state: present
+- name: SELinux booleans for Apache networking
+  seboolean:
+    name: "{{ item }}"
+    state: true
+    persistent: true
+  loop:
+    - httpd_can_network_connect
+    - httpd_can_sendmail
 
-    - name: Enable and start Webmin
-      systemd:
-        name: webmin
-        state: started
-        enabled: true
+- name: Configure Docker logging caps
+  copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {"log-driver":"json-file","log-opts":{"max-size":"50m","max-file":"5"}}
+  notify: restart docker
 
-    - name: Install EPEL release and common tools
-      dnf:
-        name:
-          - epel-release
-          - git
-          - curl
-          - vim
-          - htop
-          - python3-pip
-        state: present
+- name: Install kubectl
+  shell: |
+    set -e
+    KVER=$(curl -fsSL https://storage.googleapis.com/kubernetes-release/release/stable.txt)
+    curl -fsSL -o /usr/local/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/${KVER}/bin/linux/amd64/kubectl
+    chmod 0755 /usr/local/bin/kubectl
+  args:
+    creates: /usr/local/bin/kubectl
 
-    - name: Install Docker using community.docker.docker_installation if available
-      block:
-        - name: Install Docker using community.docker.docker_installation
-          community.docker.docker_installation:
-            state: present
-      rescue:
-        - name: Install Docker packages via dnf
-          dnf:
-            name:
-              - docker-ce
-              - docker-ce-cli
-              - containerd.io
-            state: present
+- name: Install helm
+  shell: |
+    set -e
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
 
-    - name: Enable and start Docker
-      systemd:
-        name: docker
-        state: started
-        enabled: true
+handlers:
+  - name: restart ssh
+    service: { name: sshd, state: restarted }
+  - name: restart docker
+    service: { name: docker, state: restarted }
+---
+- name: Ensure firewalld is running
+  systemd: { name: firewalld, state: started, enabled: true }
 
-    - name: Install docker-compose-plugin if available
-      dnf:
-        name: docker-compose-plugin
-        state: present
-      ignore_errors: yes
+- name: Open TCP ports
+  firewalld:
+    port: "{{ item }}/tcp"
+    permanent: true
+    state: enabled
+  loop: "{{ open_ports | default([22,80,443,10000]) }}"
+  notify: reload firewalld
 
-    - name: Install k3d from GitHub releases
-      get_url:
-        url: https://github.com/k3d-io/k3d/releases/latest/download/k3d-linux-amd64
-        dest: /usr/local/bin/k3d
-        mode: '0755'
+- name: Open UDP ports for RustDesk relay
+  firewalld:
+    port: 21116/udp
+    permanent: true
+    state: enabled
+  notify: reload firewalld
 
-    - name: Create Jenkins Docker volume
-      docker_volume:
-        name: jenkins_home
-        state: present
+handlers:
+  - name: reload firewalld
+    service: { name: firewalld, state: reloaded }
+---
+- name: Add Docker CE repo
+  get_url:
+    url: https://download.docker.com/linux/centos/docker-ce.repo
+    dest: /etc/yum.repos.d/docker-ce.repo
+    mode: '0644'
 
-    - name: Run Jenkins container
-      docker_container:
-        name: "{{ jenkins_container_name }}"
-        image: jenkins/jenkins:lts
-        state: started
-        restart_policy: always
-        published_ports:
-          - "127.0.0.1:8080:8080"
-        volumes:
-          - jenkins_home:/var/jenkins_home
+- name: Install Docker CE + compose plugin
+  package:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
 
-    - name: Install Apache (httpd) and required modules
-      dnf:
-        name:
-          - httpd
-          - mod_ssl
-          - policycoreutils-python-utils
-          - firewalld
-        state: present
+- name: Enable & start Docker
+  service: { name: docker, state: started, enabled: true }
+---
+- name: Install Virtualmin installer
+  get_url:
+    url: https://software.virtualmin.com/gpl/scripts/install.sh
+    dest: /root/virtualmin-install.sh
+    mode: '0755'
 
-    - name: Enable and start Apache and firewalld
-      systemd:
-        name: "{{ item }}"
-        state: started
-        enabled: true
-      loop: [ httpd, firewalld ]
+- name: Run Virtualmin installer (idempotent-ish)
+  command: /root/virtualmin-install.sh -y --minimal
+  args:
+    creates: /etc/webmin/webmin.acl
 
-    - name: Ensure vhosts dir and include are present
-      block:
-        - name: Create /etc/httpd/vhosts directory
-          file:
-            path: /etc/httpd/vhosts
-            state: directory
-            mode: '0755'
-        - name: Install include file for our vhosts
-          copy:
-            dest: /etc/httpd/conf.d/00-vhosts-include.conf
-            content: |
-              IncludeOptional /etc/httpd/vhosts/*.conf
-          notify: reload apache
+- name: Ensure Apache is running
+  systemd: { name: httpd, state: started, enabled: true }
 
-    - name: Ensure SELinux booleans for httpd proxy/mail
-      seboolean:
-        name: "{{ item }}"
-        state: true
-        persistent: true
-      loop:
-        - httpd_can_network_connect
-        - httpd_can_sendmail
+- name: Register Manager vhost spec
+  set_fact:
+    web_vhosts: >-
+      {{ (web_vhosts | default([])) + [{
+        "name": "100-manager.conf",
+        "server_name": manager_host,
+        "backend": "http://127.0.0.1:10000/"
+      }] }}
+---
+- name: Ensure TLS dir exists
+  file: { path: "/etc/ssl/{{ domain_base }}", state: directory, mode: '0755' }
 
-    - name: Ensure TLS directory exists
-      file:
-        path: "/etc/ssl/{{ domain_base }}"
-        state: directory
-        mode: '0755'
+- name: Issue wildcard cert via acme.sh (Cloudflare dns-01)
+  shell: |
+    curl -fsSL https://get.acme.sh | sh -s email={{ letsencrypt_email }}
+    export CF_Token='{{ cf_api_token | default("") }}'
+    ~/.acme.sh/acme.sh --issue --dns dns_cf -d {{ domain_base }} -d "*.{{ domain_base }}"
+    ~/.acme.sh/acme.sh --install-cert -d {{ domain_base }} \
+      --fullchain-file /etc/ssl/{{ domain_base }}/fullchain.pem \
+      --key-file /etc/ssl/{{ domain_base }}/privkey.pem \
+      --reloadcmd "systemctl reload httpd"
+  args:
+    creates: "/etc/ssl/{{ domain_base }}/fullchain.pem"
+  when: dns_provider | default('cloudflare') == 'cloudflare' and (wildcard_issue | default(true))
+---
+- name: Install Apache and modules
+  package:
+    name:
+      - httpd
+      - mod_ssl
+    state: present
 
-    - name: Issue wildcard certificate via acme.sh and Cloudflare (dns-01)
-      shell: |
-        curl -fsSL https://get.acme.sh | sh -s email={{ letsencrypt_email }}
-        export CF_Token='{{ cf_api_token | default("") }}'
-        ~/.acme.sh/acme.sh --issue --dns dns_cf -d {{ domain_base }} -d "*.{{ domain_base }}"
-        ~/.acme.sh/acme.sh --install-cert -d {{ domain_base }} \
-          --fullchain-file /etc/ssl/{{ domain_base }}/fullchain.pem \
-          --key-file /etc/ssl/{{ domain_base }}/privkey.pem \
-          --reloadcmd "systemctl reload httpd"
-      args:
-        creates: "/etc/ssl/{{ domain_base }}/fullchain.pem"
-      when: wildcard_issue | default(true)
+- name: Ensure vhosts dir and include
+  file: { path: /etc/httpd/vhosts, state: directory, mode: '0755' }
+- copy:
+    dest: /etc/httpd/conf.d/00-vhosts-include.conf
+    content: "IncludeOptional /etc/httpd/vhosts/*.conf\n"
+  notify: reload apache
 
-    - name: Install default catch-all vhost (443 → k3d ingress)
-      copy:
-        dest: /etc/httpd/vhosts/000-default-ssl.conf
-        content: |
-          <VirtualHost *:80>
-            ServerName _
-            Redirect permanent / https://%{HTTP_HOST}%{REQUEST_URI}
-          </VirtualHost>
-          <VirtualHost *:443>
-            ServerName _
-            SSLEngine on
-            SSLCertificateFile    /etc/ssl/{{ domain_base }}/fullchain.pem
-            SSLCertificateKeyFile /etc/ssl/{{ domain_base }}/privkey.pem
-            ProxyPreserveHost On
-            RequestHeader set X-Forwarded-Proto "https"
-            ProxyPass        / http://127.0.0.1:{{ k3d_http_port | default('8080') }}/
-            ProxyPassReverse / http://127.0.0.1:{{ k3d_http_port | default('8080') }}/
-            Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
-            ErrorLog  logs/catchall-error.log
-            CustomLog logs/catchall-access.log combined
-          </VirtualHost>
-      notify: reload apache
+- name: Set base TLS facts
+  set_fact:
+    tls:
+      cert: "/etc/ssl/{{ domain_base }}/fullchain.pem"
+      key:  "/etc/ssl/{{ domain_base }}/privkey.pem"
 
-    - name: Install manager.hapy.dev vhost (proxy → Webmin 10000)
-      copy:
-        dest: /etc/httpd/vhosts/100-manager.conf
-        content: |
-          <VirtualHost *:80>
-            ServerName {{ manager_host }}
-            Redirect permanent / https://{{ manager_host }}/
-          </VirtualHost>
-          <VirtualHost *:443>
-            ServerName {{ manager_host }}
-            SSLEngine on
-            SSLCertificateFile    /etc/ssl/{{ domain_base }}/fullchain.pem
-            SSLCertificateKeyFile /etc/ssl/{{ domain_base }}/privkey.pem
-            ProxyPreserveHost On
-            RequestHeader set X-Forwarded-Proto "https"
-            ProxyPass        / http://127.0.0.1:10000/
-            ProxyPassReverse / http://127.0.0.1:10000/
-            Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
-            ErrorLog  logs/manager-error.log
-            CustomLog logs/manager-access.log combined
-          </VirtualHost>
-      notify: reload apache
+- name: Prepend catch-all vhost spec (first)
+  set_fact:
+    web_vhosts: >-
+      {{ [{"name":"000-default-ssl.conf","server_name":"_","backend":"http://127.0.0.1:{{ k3d_http_port }}/"}] + (web_vhosts | default([])) }}
 
-    - name: Install jenkins.hapy.dev vhost (proxy → Jenkins 8080)
-      copy:
-        dest: /etc/httpd/vhosts/110-jenkins.conf
-        content: |
-          <VirtualHost *:80>
-            ServerName {{ jenkins_host }}
-            Redirect permanent / https://{{ jenkins_host }}/
-          </VirtualHost>
-          <VirtualHost *:443>
-            ServerName {{ jenkins_host }}
-            SSLEngine on
-            SSLCertificateFile    /etc/ssl/{{ domain_base }}/fullchain.pem
-            SSLCertificateKeyFile /etc/ssl/{{ domain_base }}/privkey.pem
-            ProxyPreserveHost On
-            RequestHeader set X-Forwarded-Proto "https"
-            ProxyPass        / http://127.0.0.1:8080/
-            ProxyPassReverse / http://127.0.0.1:8080/
-            Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
-            ErrorLog  logs/jenkins-error.log
-            CustomLog logs/jenkins-access.log combined
-          </VirtualHost>
-      notify: reload apache
+- name: Render vhosts from specs
+  template:
+    src: vhost.conf.j2
+    dest: "/etc/httpd/vhosts/{{ item.name }}"
+    mode: '0644'
+  loop: "{{ web_vhosts | default([]) }}"
+  notify: reload apache
 
-    - name: Install grafana.hapy.dev vhost (front → k3d Ingress)
-      copy:
-        dest: /etc/httpd/vhosts/120-grafana.conf
-        content: |
-          <VirtualHost *:80>
-            ServerName {{ grafana_host }}
-            Redirect permanent / https://{{ grafana_host }}/
-          </VirtualHost>
-          <VirtualHost *:443>
-            ServerName {{ grafana_host }}
-            SSLEngine on
-            SSLCertificateFile    /etc/ssl/{{ domain_base }}/fullchain.pem
-            SSLCertificateKeyFile /etc/ssl/{{ domain_base }}/privkey.pem
-            ProxyPreserveHost On
-            RequestHeader set X-Forwarded-Proto "https"
-            ProxyPass        / http://127.0.0.1:{{ k3d_http_port | default('8080') }}/
-            ProxyPassReverse / http://127.0.0.1:{{ k3d_http_port | default('8080') }}/
-            Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
-          </VirtualHost>
-      notify: reload apache
+handlers:
+  - name: reload apache
+    service: { name: httpd, state: reloaded }
+---
+<VirtualHost *:80>
+  ServerName {{ item.server_name }}
+  Redirect permanent / https://{{ item.server_name }}/
+</VirtualHost>
 
-    - name: Install vpn.hapy.dev vhost (path /ws → Amnezia 8443 local)
-      copy:
-        dest: /etc/httpd/vhosts/130-vpn.conf
-        content: |
-          <VirtualHost *:80>
-            ServerName {{ vpn_host }}
-            Redirect permanent / https://{{ vpn_host }}/
-          </VirtualHost>
-          <VirtualHost *:443>
-            ServerName {{ vpn_host }}
-            SSLEngine on
-            SSLCertificateFile    /etc/ssl/{{ domain_base }}/fullchain.pem
-            SSLCertificateKeyFile /etc/ssl/{{ domain_base }}/privkey.pem
-            ProxyPreserveHost On
-            RequestHeader set X-Forwarded-Proto "https"
-            ProxyPass        /ws https://127.0.0.1:8443/
-            ProxyPassReverse /ws https://127.0.0.1:8443/
-          </VirtualHost>
-      notify: reload apache
+<VirtualHost *:443>
+  ServerName {{ item.server_name }}
+  SSLEngine on
+  SSLCertificateFile    {{ tls.cert }}
+  SSLCertificateKeyFile {{ tls.key }}
 
-    - name: Open firewall ports (http/https/webmin)
-      firewalld:
-        port: "{{ item }}"
-        permanent: true
-        state: enabled
-      loop:
-        - 80/tcp
-        - 443/tcp
-        - 10000/tcp
-      notify: reload firewalld
+  ProxyPreserveHost On
+  RequestHeader set X-Forwarded-Proto "https"
 
-    - name: Open mail and rustdesk ports (if needed)
-      firewalld:
-        port: "{{ item }}"
-        permanent: true
-        state: enabled
-      loop:
-        - 25/tcp
-        - 465/tcp
-        - 587/tcp
-        - 143/tcp
-        - 993/tcp
-        - 21115/tcp
-        - 21116/tcp
-        - 21116/udp
-      notify: reload firewalld
+{% if item.path_map is defined %}
+{% for p,b in item.path_map.items() %}
+  ProxyPass        {{ p }} {{ b }}
+  ProxyPassReverse {{ p }} {{ b }}
+{% endfor %}
+{% else %}
+  ProxyPass        / {{ item.backend }}
+  ProxyPassReverse / {{ item.backend }}
+{% endif %}
 
-    - name: Create k3d storage dir and set SELinux context
-      block:
-        - file:
-            path: "/srv/k3d-storage"
-            state: directory
-            mode: '0755'
-        - sefcontext:
-            target: '/srv/k3d-storage(/.*)?'
-            setype: container_file_t
-            state: present
-        - command: restorecon -Rv /srv/k3d-storage
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  ErrorLog  logs/{{ item.server_name | regex_replace('[^a-zA-Z0-9_-]','_') }}-error.log
+  CustomLog logs/{{ item.server_name | regex_replace('[^a-zA-Z0-9_-]','_') }}-access.log combined
+  {{ item.extra | default('') }}
+</VirtualHost>
+---
+- name: Install mail stack
+  package:
+    name:
+      - postfix
+      - dovecot
+      - dovecot-pigeonhole
+      - spamassassin
+      - clamav
+      - clamav-update
+    state: present
+  when: mail_enabled | default(true)
 
-    - name: Create k3d cluster (idempotent)
-      shell: |
-        k3d cluster list | grep -q '^prod\b' && exit 0
-        k3d cluster create prod \
-          --servers 1 \
-          --api-port {{ k3d_api_port | default('127.0.0.1:6550') }} \
-          -p "{{ k3d_http_port | default('127.0.0.1:8080') }}:80@loadbalancer" \
-          --k3s-arg "--disable=servicelb@server:*" \
-          --volume /srv/k3d-storage:/var/lib/rancher/k3s/storage@server:*
+- name: Enable mail services
+  systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - postfix
+    - dovecot
+    - spamassassin
+  when: mail_enabled | default(true)
+---
+- name: Ensure Jenkins data dir
+  file: { path: "{{ jenkins_data_dir }}", state: directory, mode: '0755' }
+- name: SELinux context for Jenkins data
+  sefcontext:
+    target: '{{ jenkins_data_dir }}(/.*)?'
+    setype: container_file_t
+    state: present
+- command: restorecon -Rv {{ jenkins_data_dir }}
 
-  handlers:
-    - name: reload apache
-      service: { name: httpd, state: reloaded }
-    - name: reload firewalld
-      service: { name: firewalld, state: reloaded }
+- name: Run Jenkins container
+  community.docker.docker_container:
+    name: jenkins
+    image: jenkins/jenkins:lts
+    user: "0:0"
+    restart_policy: always
+    published_ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - "{{ jenkins_data_dir }}:/var/jenkins_home"
+
+- name: Register Jenkins vhost spec
+  set_fact:
+    web_vhosts: >-
+      {{ (web_vhosts | default([])) + [{
+        "name": "110-jenkins.conf",
+        "server_name": jenkins_host,
+        "backend": "http://127.0.0.1:8080/"
+      }] }}
+---
+- name: Install k3d binary
+  get_url:
+    url: https://github.com/k3d-io/k3d/releases/download/v5.7.4/k3d-linux-amd64
+    dest: /usr/local/bin/k3d
+    mode: '0755'
+
+- name: Ensure storage dir and SELinux label
+  file: { path: "{{ k3d_storage_host_dir }}", state: directory, mode: '0755' }
+- sefcontext:
+  target: '{{ k3d_storage_host_dir }}(/.*)?'
+  setype: container_file_t
+  state: present
+- command: restorecon -Rv {{ k3d_storage_host_dir }}
+
+- name: Create k3d cluster (idempotent)
+  shell: |
+    k3d cluster list | grep -q '^{{ k3d_name }}\b' && exit 0
+    k3d cluster create {{ k3d_name }} \
+      --servers 1 \
+      --api-port {{ k3d_api_port }} \
+      -p "{{ k3d_http_port }}:80@loadbalancer" \
+      --k3s-arg "--disable=servicelb@server:*" \
+      --volume {{ k3d_storage_host_dir }}:/var/lib/rancher/k3s/storage@server:*
+---
+- name: Deploy VictoriaMetrics + vmagent + vmalert + Grafana
+  shell: |
+    kubectl create ns observability || true
+    helm repo add vm https://victoriametrics.github.io/helm-charts
+    helm repo add grafana https://grafana.github.io/helm-charts
+    helm repo update
+    helm upgrade --install vm vm/victoria-metrics-single -n observability --set server.retentionPeriod=12
+    helm upgrade --install vmagent vm/victoria-metrics-agent -n observability
+    helm upgrade --install vmalert vm/victoria-metrics-alert -n observability
+    helm upgrade --install grafana grafana/grafana -n observability --set adminPassword='{{ grafana_admin_password | default("CHANGE_ME_ADMIN") }}' --set service.type=ClusterIP
+  args:
+    executable: /bin/bash
+  when: monitoring_stack | default('vm_grafana') == 'vm_grafana'
+
+- name: Register Grafana vhost spec
+  set_fact:
+    web_vhosts: >-
+      {{ (web_vhosts | default([])) + [{
+        "name": "120-grafana.conf",
+        "server_name": grafana_host,
+        "backend": "http://{{ k3d_http_port }}/"
+      }] }}
+  when: monitoring_stack | default('vm_grafana') == 'vm_grafana'
+---
+- name: Ensure Amnezia dir
+  file: { path: /srv/amnezia, state: directory, mode: '0755' }
+
+- name: Deploy Amnezia container (compose-less)
+  community.docker.docker_container:
+    name: amnezia
+    image: ghcr.io/amnezia-vpn/amnezia-server:latest
+    restart_policy: unless-stopped
+    published_ports:
+      - "127.0.0.1:8443:8443"
+  when: vpn_provider | default('amnezia') == 'amnezia'
+
+- name: Register VPN vhost spec (path /ws)
+  set_fact:
+    web_vhosts: >-
+      {{ (web_vhosts | default([])) + [{
+        "name": "130-vpn.conf",
+        "server_name": vpn_host,
+        "path_map": { "/ws": "https://127.0.0.1:8443/" }
+      }] }}
+  when: vpn_provider | default('amnezia') == 'amnezia'
+---
+- name: Run RustDesk hbbs (ID server)
+  community.docker.docker_container:
+    name: hbbs
+    image: rustdesk/rustdesk-server:latest
+    command: hbbs -r rustdesk.{{ domain_base }}:21116
+    network_mode: host
+    restart_policy: unless-stopped
+
+- name: Run RustDesk hbbr (relay)
+  community.docker.docker_container:
+    name: hbbr
+    image: rustdesk/rustdesk-server:latest
+    command: hbbr
+    network_mode: host
+    restart_policy: unless-stopped

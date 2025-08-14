@@ -1,0 +1,49 @@
+---
+# ===== Domain / Hosts (examples — replace) =====
+domain_base: "example.com"
+manager_host: "manager.example.com"
+jenkins_host: "jenkins.example.com"
+grafana_host: "grafana.example.com"
+vpn_host: "vpn.example.com"
+
+# ===== DNS / ACME =====
+dns_provider: "cloudflare"         # cloudflare|none
+letsencrypt_email: "admin@example.com"
+wildcard_issue: true
+
+# ===== Web / Proxy =====
+use_catch_all_to_k3d: true
+
+# ===== Mail =====
+mail_enabled: true
+enable_pop3: false
+
+# ===== Jenkins =====
+jenkins_data_dir: "/srv/jenkins"
+jenkins_http_port: 8080
+
+# ===== k3d =====
+k3d_name: "prod"
+k3d_api_port: "127.0.0.1:6550"
+k3d_http_port: "127.0.0.1:8080"
+k3d_storage_host_dir: "/srv/k3d-storage"
+
+# ===== Monitoring =====
+monitoring_stack: "vm_grafana"     # vm_grafana|none
+
+# ===== VPN =====
+vpn_provider: "amnezia"            # amnezia|none
+
+# ===== Firewall (TCP ports) =====
+open_ports:
+  - 22
+  - 80
+  - 443
+  - 10000
+  - 25
+  - 465
+  - 587
+  - 143
+  - 993
+  - 21115
+  - 21116

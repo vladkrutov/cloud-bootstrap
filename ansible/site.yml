@@ -1,0 +1,39 @@
+---
+- hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - group_vars/all.yml
+    - vault.yml
+
+  pre_tasks:
+    - name: Check local vars exist
+      stat: { path: "{{ playbook_dir }}/group_vars/all.yml" }
+      register: allvars
+    - name: Fail if group_vars/all.yml missing
+      fail:
+        msg: "Missing group_vars/all.yml. Copy ansible/group_vars/all.yml.sample to ansible/group_vars/all.yml and fill your values."
+      when: not allvars.stat.exists
+    - name: Check vault.yml exists
+      stat: { path: "{{ playbook_dir }}/vault.yml" }
+      register: vaultvars
+    - name: Warn if vault.yml missing
+      debug:
+        msg: "vault.yml not found — proceeding without secrets. Create from ansible/vault.yml.sample and encrypt via ansible-vault when ready."
+      when: not vaultvars.stat.exists
+
+  roles:
+    - common
+    - firewall
+    - docker
+    - virtualmin
+    - cloudflare_provider
+    - apache
+    - mail
+    - jenkins_docker
+    - k3d
+    - monitoring_vm_grafana
+    - vpn_amnezia
+    - rustdesk
